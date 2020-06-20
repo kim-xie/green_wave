@@ -1,0 +1,1490 @@
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>green_tool</title>
+    <style type = "text/css">
+    body{ font: 12px Arial;}
+    path{
+        stroke: steelblue;
+        stroke-width: 2;
+        fill: none;
+    }
+    .axis path,
+    .axis line{
+        fill: none;
+        stroke: grey;
+        stroke-width: 1;
+        shape-rendering: crispEdges;
+    }
+    #d3_wrap{
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        border: 0.1px solid red;
+    }
+    #d3_top{
+        width: 100%;
+        height: 200px;
+        border-bottom: 0.1px solid red;
+    }
+    #d3_bottom{
+        width: 100%;
+        height: calc(100% - 200px);
+        display: flex;
+    }
+    #d3_bottom_left{
+        width: 200px;
+        height: 100%;
+        border-right: 0.1px solid red;
+    }
+    #d3_bottom_right{
+        width: calc(100% - 200px);
+        height: 100%;
+        display: flex;
+    }
+    #d3_bottom_right_svg{
+        width: calc(100% - 200px);
+        height: 100%;
+    }
+    #d3_bottom_right_tip{
+        width: 200px;
+        height: 100%;
+        border-left: 0.1px solid red;
+    }
+    </style>
+    <script type="text/javascript" src="http://d3js.org/d3.v5.min.js"></script>
+</head>
+
+<body>
+<!-- <script src="d3/d3.min.js"></script> -->
+<div id="d3_wrap">
+    <div id="d3_top"></div>
+    <div id="d3_bottom">
+        <div id="d3_bottom_left"></div>
+        <div id="d3_bottom_right">
+            <div id="d3_bottom_right_svg"></div>
+            <div id="d3_bottom_right_tip"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+
+// 地图配置数据
+map_configure=[{
+        'junction_id': "2017030116_1205544",
+        'junction_name': "交叉口1",
+        'junction_loc': [21, 21], // 路口坐标
+        'free_speed': [15,15] // 正反向斜率
+    },
+    {
+        'junction_id': "2017030116_1311979",
+        'junction_name': '交叉口2',
+        'junction_loc': [229, 229],
+        'free_speed': [15,15]
+    }]
+
+// 信号配置
+signal_configure = [{
+        'junction_id': "2017030116_1205544",
+        'cycle': 100, // 周期
+        'offset': 0, // 相位差
+        'signal_phase': [{
+            'phase_id': 1, // 正向绿灯
+            'green_start': 80, // 绿灯开始时间点
+            'green_duration': 30 // 绿灯持续时长
+        },
+        {
+            'phase_id': 2, // 反向
+            'green_start': 10,
+            'green_duration': 30
+        }]
+    },
+    {
+        'junction_id': "2017030116_1311979",
+        'cycle': 100,
+        'offset': 20,
+        'signal_phase': [{
+            'phase_id': 1,
+            'green_start': 0,
+            'green_duration': 30
+        },
+        {
+            'phase_id': 2,
+            'green_start': 0,
+            'green_duration': 30
+        }]
+    }]
+
+// 阶段信息
+stage_info = [{'stage_id': 1, 'dis': 0},{'stage_id': 2, 'dis': 30}]
+
+// svg画布
+var gwtool_width = 600;
+var gwtool_height = 500;
+
+var rightDiv = d3.select("#d3_bottom_right_svg")
+
+// svg外围画布
+var svg1 = rightDiv.append("svg")
+            .attr("width", '100%')
+            .attr("height", '100%')
+
+// 比列尺
+var xScale = d3.scaleLinear().domain([0, gwtool_width]).range([0, gwtool_width]);
+var yScale = d3.scaleLinear().domain([0, gwtool_height]).range([0, gwtool_height]);
+
+// 定义一个坐标轴
+var xAxis = d3.axisBottom(xScale).ticks(7);//设置刻度数目
+var yAxis = d3.axisLeft(yScale).ticks(7);//设置刻度数目
+
+// 添加坐标轴
+svg1.append("g").attr("transform","translate("+30+",480)").call(xAxis)
+svg1.append("g").attr("transform","translate("+30+",2)").call(yAxis)
+
+// svg绿波画布
+var svg = svg1.append("g")
+            .attr("transform","translate("+30+",2)")
+            .append("svg")
+            .attr("width", "100%")
+            .attr("height", "100%")
+            .style("overflow","hidden")
+
+show_time = 1800
+//cycle_num=2
+
+signal_bar = 10
+stage_bar_height = 6
+green_line_width = 0.5
+green_line_color = 'green'
+red_line_color = '#ff0000'
+yellow_line_color = 'yellow'
+
+// 生成信号灯数据
+var final_data4plot = new_generate_signal_data(stage_info, show_time, signal_configure, map_configure);
+var data4plot = []
+index = 0
+console.log('final_data4plot',final_data4plot)
+for (let i = 0; i < final_data4plot.length; i++) {
+    sin_data = final_data4plot[i].bar_data
+    for (let j = 0; j < sin_data.length; j++) {
+        sin_data[j].index = index
+        data4plot.push(sin_data[j])
+        index++
+    }
+}
+
+// 显示内容
+var show_info = show_label(data4plot, map_configure)
+
+// 生成绿波
+var final_green = re_generate_greenwave(data4plot)
+
+console.log('d3',d3)
+// 拖拽
+var dragging = d3.drag()
+    .on('drag', function (d) {
+        console.log('拖拽',d)
+        junction_id = d.id
+        drag_index = d.index
+        origin_t_st = d.x
+        drag_t_st = d3.event.x
+        type = d.type
+        console.log('type',type)
+        console.log('origin_t_st',origin_t_st)
+        console.log('drag_t_st',drag_t_st)
+        // if (d.type == 'drap') {
+        //     if (drag_t_st < 5 * cycle) {
+        //         d3.select(this).attr({
+        //             'x': d.x = drag_t_st
+        //         });
+        //         data4plot = re_generate_data4plot(data4plot, drag_index, d.type)
+        //         final_green = plot_greenwave(data4plot, map_configure, cycle_num)
+        //         update_d3()
+        //     }
+        // }
+
+        if (d.type == 'green' || d.type == 'red') {
+            // 更新当前位置
+            d3.select(this).attr({
+                'x': d.x = drag_t_st
+            })
+
+            // 更新配时数据
+            var newData4plot = re_generate_data4plot(data4plot, drag_index, d.type)
+            // 重新生成绿波
+            final_green = re_generate_greenwave(newData4plot)
+            // 更新数据
+            update_d3(newData4plot, final_green)
+        }
+    })
+
+// 初始化
+load_bar(data4plot, final_green, show_info)
+
+
+// 1、生成新的信號數據
+function new_generate_signal_data(stage_info, show_time, signal_configure, map_configure) {
+    console.log('new_generate_signal_data')
+    //信号配时数据准备
+    var final_data4plot = []
+    for (var i = 0; i < stage_info.length; i++) {
+        var index = 0
+        var data4plot = []
+        // 路宽
+        var rela_dis = stage_info[i].dis
+        // 阶段
+        var stage = stage_info[i].stage_id - 1
+        // 生成配时数据
+        data4plot = generate_signal_data(stage, rela_dis, show_time, signal_configure, map_configure)
+        final_data4plot.push({
+            'stage_id': stage,
+            'bar_data': data4plot
+        })
+    }
+    return final_data4plot
+
+}
+
+// 2、生成信號數據
+function generate_signal_data(stage, stage_dis, show_time, signal_configure, map_configure) {
+    let data4plot = []
+    let index = 0;
+    let cycle_id = 0;
+    for (let j = 0; j < signal_configure.length; j++) {
+        // 信号灯配置
+        let signal_data = signal_configure[j]
+        // 路口id
+        let junction_id = signal_data.junction_id
+        // 相位差
+        let offset = signal_data.offset
+        // 周期
+        let cycle = signal_data.cycle
+        // 信号灯配置
+        let signal_phase = signal_data.signal_phase
+        // 正反向绿灯开始时间
+        let green_st = signal_phase[stage].green_start
+        // 正反向绿灯持续时长
+        let green_dur = signal_phase[stage].green_duration
+        // 路网信息
+        let junction_loc = map_configure[j].junction_loc[1] + stage_dis
+        // 循环周期数
+        let number_cycle = Math.floor((show_time - offset - green_st)/cycle)
+        console.log('循环周期数',number_cycle)
+        // console.log('路网信息',junction_loc)
+        // console.log('this is signal_data')
+        // console.log(signal_data)
+
+        // 信号灯公共数据
+        const plotDataObj = {
+            junction_id,
+            stage,
+            index,
+            junction_loc,
+            cycle,
+            offset,
+            green_start: green_st
+        }
+
+        // 无相位差
+        if (offset == 0) {
+            //  0 <= 绿灯开始时间 <= 周期 - 绿灯时长
+            for (var i = 0; i < number_cycle; i++) {
+                cycle_id = i + 1
+                if(green_st > 0){
+                    if(green_st < cycle - green_dur){
+                        console.log('绿灯开始时间 < 周期 - 绿灯时长')
+                        // 绿灯开始时间大于0 红-绿-红（为一个周期）
+                        const redPlotData = Object.assign({},plotDataObj,{
+                            signal_status: 'red',
+                            cycle_id,
+                            x: 0 + cycle * i,
+                            w: green_st,
+                        })
+                        data4plot.push(signal_data_prepare(redPlotData))
+                        index++
+                        const greenPlotData = Object.assign({},plotDataObj,{
+                            signal_status: 'green',
+                            cycle_id,
+                            x: green_st + cycle * i,
+                            w: green_dur,
+                        })
+                        data4plot.push(signal_data_prepare(greenPlotData))
+                        index++
+                        const redPlotData2 = Object.assign({},plotDataObj,{
+                            signal_status: 'red',
+                            cycle_id,
+                            x: green_st + green_dur + cycle * i,
+                            w: cycle - green_dur - green_st,
+                        })
+                        data4plot.push(signal_data_prepare(redPlotData2))
+                        index++
+                    }else if(green_st = cycle - green_dur){
+                        console.log('绿灯开始时间 = 周期 - 绿灯时长')
+                        // 红 + 绿（为一个周期）
+                        const redPlotData = Object.assign({},plotDataObj,{
+                            signal_status: 'red',
+                            cycle_id,
+                            x: 0 + cycle * i,
+                            w: green_st,
+                        })
+                        data4plot.push(signal_data_prepare(redPlotData))
+                        index++
+                        const greenPlotData = Object.assign({},plotDataObj,{
+                            signal_status: 'green',
+                            cycle_id,
+                            x: green_st + cycle * i,
+                            w: green_dur,
+                        })
+                        data4plot.push(signal_data_prepare(greenPlotData))
+                        index++
+                    }else if(green_st > cycle - green_dur && green_st < cycle){
+                        console.log('绿灯开始时间 > 周期 - 绿灯时长')
+                        // 绿 + 红 + 绿（为一个周期）
+                        const greenPlotData = Object.assign({},plotDataObj,{
+                            signal_status: 'green',
+                            cycle_id,
+                            x: 0 + cycle * i,
+                            w: green_dur - (cycle - green_st),
+                        })
+                        data4plot.push(signal_data_prepare(greenPlotData))
+                        index++
+                        const redPlotData = Object.assign({},plotDataObj,{
+                            signal_status: 'red',
+                            cycle_id,
+                            x: 0 + cycle * i,
+                            w: green_st,
+                        })
+                        data4plot.push(signal_data_prepare(redPlotData))
+                        index++
+                        const greenPlotData2 = Object.assign({},plotDataObj,{
+                            signal_status: 'green',
+                            cycle_id,
+                            x: green_st + cycle * i,
+                            w: cycle - green_st,
+                        })
+                        data4plot.push(signal_data_prepare(greenPlotData2))
+                        index++
+                    }else{
+                        alert('绿灯开始时间不能大于等于周期')
+                    }
+                }else{
+                    // 绿灯开始时间为0 绿-红（为一个周期）
+                    const greenPlotData = Object.assign({},plotDataObj,{
+                        signal_status: 'green',
+                        cycle_id,
+                        x: green_st + cycle * i,
+                        w: green_dur,
+                    })
+                    data4plot.push(signal_data_prepare(greenPlotData))
+                    index++
+                    // data4plot.push(signal_data_prepare(junction_id, stage, cycle_id, index, 'drap', green_st + green_dur + cycle * i, junction_loc, cycle - green_dur,cycle,offset,green_st))
+                    // index++
+                    const redPlotData = Object.assign({},plotDataObj,{
+                        signal_status: 'red',
+                        cycle_id,
+                        x: green_st + green_dur + cycle * i,
+                        w: cycle - green_dur,
+                    })
+                    data4plot.push(signal_data_prepare(redPlotData))
+                    index++
+                    // if (i < number_cycle - 1) {
+                    //     data4plot.push(signal_data_prepare(junction_id, stage, cycle_id, index, 'drap', green_st + cycle + cycle * i, junction_loc, cycle - green_dur,cycle,offset,green_st))
+                    //     index++
+                    // }
+                }
+            }
+            // 补全可视区域
+            // var left_time = show_time - cycle*number_cycle
+            // // console.log('left_time',left_time)
+            // // 判断协调相位绿灯起亮是否为0
+            // if (left_time != 0){
+            //     // data4plot.push(signal_data_prepare(junction_id, stage, number_cycle, index, 'drap', green_st + green_dur + cycle * number_cycle, junction_loc, cycle - green_dur,cycle,offset,green_st))
+            //     // index++
+            //     // 绿灯开始时间不为0
+            //     if (left_time <= green_dur){
+            //         const greenPlotData = Object.assign({},plotDataObj,{
+            //             signal_status: 'green',
+            //             cycle_id: number_cycle+1,
+            //             x: green_st + cycle * number_cycle,
+            //             w: left_time,
+            //         })
+            //         data4plot.push(signal_data_prepare(greenPlotData))
+            //         index++
+            //     } else {
+            //         // 红灯时长
+            //         var red_left_time = left_time - green_dur
+            //         const greenPlotData = Object.assign({},plotDataObj,{
+            //             signal_status: 'green',
+            //             cycle_id: number_cycle+1,
+            //             x: green_st + cycle * number_cycle,
+            //             w: green_dur,
+            //         })
+            //         data4plot.push(signal_data_prepare(greenPlotData))
+            //         index++
+            //         // data4plot.push(signal_data_prepare(junction_id, stage, number_cycle+1, index, 'drap', green_st + green_dur + cycle * number_cycle, junction_loc, cycle - green_dur,cycle,offset,green_st))
+            //         // index++
+            //         const redPlotData = Object.assign({},plotDataObj,{
+            //             signal_status: 'red',
+            //             cycle_id: number_cycle+1,
+            //             x: green_st + green_dur + cycle * number_cycle,
+            //             w: red_left_time,
+            //         })
+            //         data4plot.push(signal_data_prepare(redPlotData))
+            //         index++
+            //     }
+            // }
+        } else {
+            // 有相位差
+            cycle_id = 0
+            // 绿灯开始时间为0
+            if(green_st == 0){
+                const red_dur = cycle - green_dur;
+                // 绿 + 红模式下 偏移量 <= 红灯长度
+                if(offset <= red_dur ){
+                    console.log('偏移量 <= 红灯长度')
+                    const redPlotData = Object.assign({},plotDataObj,{
+                        signal_status: 'red',
+                        cycle_id,
+                        x: 0,
+                        w: offset,
+                    })
+                    data4plot.push(signal_data_prepare(redPlotData))
+                    index++
+                }else{
+                    console.log('偏移量 > 红灯长度')
+                    // 偏移量 > 红灯长度
+                    const greenPlotData = Object.assign({},plotDataObj,{
+                        signal_status: 'green',
+                        cycle_id,
+                        x: 0,
+                        w: offset - red_dur,
+                    })
+                    data4plot.push(signal_data_prepare(greenPlotData))
+                    index++
+                    const redPlotData = Object.assign({},plotDataObj,{
+                        signal_status: 'red',
+                        cycle_id,
+                        x: offset - red_dur,
+                        w: red_dur,
+                    })
+                    data4plot.push(signal_data_prepare(redPlotData))
+                    index++
+                }
+            }else{
+                // 绿灯开始时间>0
+                const left_red = cycle - green_st - green_dur
+                if(offset <= left_red){
+                    // 偏移量刚好装下红灯
+                    const redPlotData = Object.assign({},plotDataObj,{
+                        signal_status: 'red',
+                        cycle_id,
+                        x: 0,
+                        w: offset,
+                    })
+                    data4plot.push(signal_data_prepare(redPlotData))
+                    index++
+                }else if(offset <= cycle - green_st){
+                    // 偏移量刚好装下绿 + 红
+                    const greenPlotData = Object.assign({},plotDataObj,{
+                        signal_status: 'green',
+                        cycle_id,
+                        x: 0,
+                        w: offset - left_red,
+                    })
+                    data4plot.push(signal_data_prepare(greenPlotData))
+                    index++
+                    const redPlotData = Object.assign({},plotDataObj,{
+                        signal_status: 'red',
+                        cycle_id,
+                        x: offset - left_red,
+                        w: left_red,
+                    })
+                    data4plot.push(signal_data_prepare(redPlotData))
+                    index++
+                }else{
+                    // 偏移量刚好装下红 + 绿 + 红
+                    const redPlotData = Object.assign({},plotDataObj,{
+                        signal_status: 'red',
+                        cycle_id,
+                        x: 0,
+                        w: offset - green_dur - left_red,
+                    })
+                    data4plot.push(signal_data_prepare(redPlotData))
+                    index++
+                    const greenPlotData = Object.assign({},plotDataObj,{
+                        signal_status: 'green',
+                        cycle_id,
+                        x: offset - green_dur - left_red,
+                        w: green_dur,
+                    })
+                    data4plot.push(signal_data_prepare(greenPlotData))
+                    index++
+                    const redPlotData2 = Object.assign({},plotDataObj,{
+                        signal_status: 'red',
+                        cycle_id,
+                        x: left_red,
+                        w: left_red,
+                    })
+                    data4plot.push(signal_data_prepare(redPlotData2))
+                    index++
+                }
+            }
+            // // 距离绿灯时长
+            // var left_time = offset + green_st
+            // // 相位差 + 绿灯开始时间 <= 红灯时长
+            // if (left_time <= (cycle - green_dur)) {
+            //     console.info('left_time',left_time)
+            //     // 红灯时长
+            //     const redPlotData = Object.assign({},plotDataObj,{
+            //         signal_status: 'red',
+            //         cycle_id,
+            //         x: 0,
+            //         w: left_time,
+            //     })
+            //     data4plot.push(signal_data_prepare(redPlotData))
+            //     index++
+            //     // data4plot.push(signal_data_prepare(junction_id, stage, cycle_id, index, 'drap', 0 + offset, junction_loc, offset,cycle,offset,green_st))
+            //     // index++
+            // } else{
+            //     // 绿灯的长度
+            //     var green_left_time = left_time - (cycle - green_dur)
+            //     console.info('green_left_time',green_left_time)
+            //     const greenPlotData = Object.assign({},plotDataObj,{
+            //         signal_status: 'green',
+            //         cycle_id,
+            //         x: 0,
+            //         w: green_left_time,
+            //     })
+            //     data4plot.push(signal_data_prepare(greenPlotData))
+            //     index++
+            //     // data4plot.push(signal_data_prepare(junction_id, stage, cycle_id, index, 'drap', green_left_time, junction_loc, cycle-green_dur,cycle,offset,green_st))
+            //     // index++
+            //     const redPlotData = Object.assign({},plotDataObj,{
+            //         signal_status: 'red',
+            //         cycle_id,
+            //         x: green_left_time,
+            //         w: cycle - green_dur,
+            //     })
+            //     data4plot.push(signal_data_prepare(redPlotData))
+            //     index++
+            //     // data4plot.push(signal_data_prepare(junction_id, stage, cycle_id, index, 'drap', green_left_time+cycle-green_dur, junction_loc, cycle-green_dur,cycle,offset,green_st))
+            //     // index++
+            // }
+
+            // 正常周期
+            for (let i = 0; i < number_cycle; i++) {
+                if(green_st > 0){
+                    if(green_st < cycle - green_dur){
+                        console.log('绿灯开始时间 < 周期 - 绿灯时长')
+                        // 绿灯开始时间大于0 红-绿-红（为一个周期）
+                        const redPlotData = Object.assign({},plotDataObj,{
+                            signal_status: 'red',
+                            cycle_id,
+                            x: offset + cycle * i,
+                            w: green_st,
+                        })
+                        data4plot.push(signal_data_prepare(redPlotData))
+                        index++
+                        const greenPlotData = Object.assign({},plotDataObj,{
+                            signal_status: 'green',
+                            cycle_id,
+                            x: offset + green_st + cycle * i,
+                            w: green_dur,
+                        })
+                        data4plot.push(signal_data_prepare(greenPlotData))
+                        index++
+                        const redPlotData2 = Object.assign({},plotDataObj,{
+                            signal_status: 'red',
+                            cycle_id,
+                            x: offset + green_st + green_dur + cycle * i,
+                            w: cycle - green_dur - green_st,
+                        })
+                        data4plot.push(signal_data_prepare(redPlotData2))
+                        index++
+                    }else if(green_st = cycle - green_dur){
+                        console.log('绿灯开始时间 = 周期 - 绿灯时长')
+                        // 红 + 绿（为一个周期）
+                        const redPlotData = Object.assign({},plotDataObj,{
+                            signal_status: 'red',
+                            cycle_id,
+                            x: offset + cycle * i,
+                            w: green_st,
+                        })
+                        data4plot.push(signal_data_prepare(redPlotData))
+                        index++
+                        const greenPlotData = Object.assign({},plotDataObj,{
+                            signal_status: 'green',
+                            cycle_id,
+                            x: offset + green_st + cycle * i,
+                            w: green_dur,
+                        })
+                        data4plot.push(signal_data_prepare(greenPlotData))
+                        index++
+                    }else if(green_st > cycle - green_dur && green_st < cycle){
+                        console.log('绿灯开始时间 > 周期 - 绿灯时长')
+                        // 绿 + 红 + 绿（为一个周期）
+                        const green_time = cycle - green_st
+                        const greenPlotData = Object.assign({},plotDataObj,{
+                            signal_status: 'green',
+                            cycle_id,
+                            x: offset + cycle * i,
+                            w: green_dur - green_time,
+                        })
+                        data4plot.push(signal_data_prepare(greenPlotData))
+                        index++
+                        const redPlotData = Object.assign({},plotDataObj,{
+                            signal_status: 'red',
+                            cycle_id,
+                            x: offset + green_dur - green_time + cycle * i,
+                            w: cycle - green_dur,
+                        })
+                        data4plot.push(signal_data_prepare(redPlotData))
+                        index++
+                        const red_time = cycle - green_dur
+                        const greenPlotData2 = Object.assign({},plotDataObj,{
+                            signal_status: 'green',
+                            cycle_id,
+                            x: offset + green_dur - green_time + red_time + cycle * i,
+                            w: green_time,
+                        })
+                        data4plot.push(signal_data_prepare(greenPlotData2))
+                        index++
+                    }else{
+                        alert('绿灯开始时间不能大于等于周期')
+                    }
+                }else{
+                    // 绿灯开始时间为0 绿-红（为一个周期）
+                    const greenPlotData = Object.assign({},plotDataObj,{
+                        signal_status: 'green',
+                        cycle_id,
+                        x: offset + green_st + cycle * i,
+                        w: green_dur,
+                    })
+                    data4plot.push(signal_data_prepare(greenPlotData))
+                    index++
+                    // data4plot.push(signal_data_prepare(junction_id, stage, cycle_id, index, 'drap', green_st + green_dur + cycle * i, junction_loc, cycle - green_dur,cycle,offset,green_st))
+                    // index++
+                    const redPlotData = Object.assign({},plotDataObj,{
+                        signal_status: 'red',
+                        cycle_id,
+                        x: offset + green_st + green_dur + cycle * i,
+                        w: cycle - green_dur,
+                    })
+                    data4plot.push(signal_data_prepare(redPlotData))
+                    index++
+                    // if (i < number_cycle - 1) {
+                    //     data4plot.push(signal_data_prepare(junction_id, stage, cycle_id, index, 'drap', green_st + cycle + cycle * i, junction_loc, cycle - green_dur,cycle,offset,green_st))
+                    //     index++
+                    // }
+                }
+            //     cycle_id = i + 1
+            //     const greenPlotData = Object.assign({},plotDataObj,{
+            //         signal_status: 'green',
+            //         cycle_id,
+            //         x: green_st + offset + cycle * i,
+            //         w: green_dur,
+            //     })
+            //     data4plot.push(signal_data_prepare(greenPlotData))
+            //     index++
+            //     // data4plot.push(signal_data_prepare(junction_id, stage, cycle_id, index, 'drap', green_st + offset + green_dur + cycle * i, junction_loc, green_dur,cycle,offset,green_st))
+            //     // index++
+
+            //     const redPlotData = Object.assign({},plotDataObj,{
+            //         signal_status: 'red',
+            //         cycle_id,
+            //         x: green_st + offset + green_dur + cycle * i,
+            //         w: cycle - green_dur,
+            //     })
+            //     data4plot.push(signal_data_prepare(redPlotData))
+            //     index++
+            //     // if (i < number_cycle - 1) {
+            //     //     data4plot.push(signal_data_prepare(junction_id, stage, cycle_id, index, 'drap', green_st + offset + cycle + cycle * i, junction_loc, green_dur,cycle,offset,green_st))
+            //     //     index++
+            //     // }
+            }
+            console.info('data4plot',data4plot)
+            // 剩余绿灯时长
+            // var new_left_time = show_time - cycle*number_cycle - offset - green_st
+            // console.info('new_left_time',new_left_time)
+            // // 有偏差
+            // if (new_left_time != 0){
+            //     // data4plot.push(signal_data_prepare(junction_id, stage, number_cycle, index, 'drap', green_st+offset+ cycle *(number_cycle), junction_loc, cycle - green_dur,cycle,offset,green_st))
+            //     // index++
+            //     // 绿灯刚好或超出分界线
+            //     if (new_left_time <= green_dur){
+            //         const greenPlotData = Object.assign({},plotDataObj,{
+            //             signal_status: 'green',
+            //             cycle_id: number_cycle+1,
+            //             x: green_st + offset + cycle *(number_cycle),
+            //             w: new_left_time,
+            //         })
+            //         data4plot.push(signal_data_prepare(greenPlotData))
+            //         index++
+            //     } else {
+            //         const greenPlotData = Object.assign({},plotDataObj,{
+            //             signal_status: 'green',
+            //             cycle_id: number_cycle + 1,
+            //             x: green_st + offset + cycle *(number_cycle),
+            //             w: green_dur,
+            //         })
+            //         data4plot.push(signal_data_prepare(greenPlotData))
+            //         index++
+            //         // data4plot.push(signal_data_prepare(junction_id, stage, number_cycle+1, index, 'drap', green_st+offset+ cycle *(number_cycle)+green_dur, junction_loc, cycle - green_dur,cycle,offset,green_st))
+            //         // index++
+            //         const redPlotData = Object.assign({},plotDataObj,{
+            //             signal_status: 'red',
+            //             cycle_id,
+            //             x: green_st + offset + cycle *(number_cycle) + green_dur,
+            //             w: left_time - green_dur,
+            //         })
+            //         data4plot.push(signal_data_prepare(redPlotData))
+            //         index++
+            //     }
+            // }
+        }
+    };
+    return data4plot
+}
+
+// 3、信號數據預處理
+function signal_data_prepare(dataObj) {
+    // console.log('信号灯数据 t_st', t_st)
+    // console.log('信号灯数据 stage', stage)
+
+    let pra_data = []
+
+    switch (dataObj.signal_status) {
+        case 'red':
+            pra_data = {
+                'id': dataObj.junction_id,
+                'stage': dataObj.stage,
+                'cycle_id': dataObj.cycle_id,
+                'index': dataObj.index,
+                'type': dataObj.signal_status,
+                'x': dataObj.x,
+                'y': dataObj.junction_loc,
+                'w': dataObj.w,
+                'h': stage_bar_height,
+                'fill': red_line_color,
+                'cycle': dataObj.cycle,
+                'offset': dataObj.offset,
+                'start': dataObj.green_start
+            }
+            break;
+        case 'green':
+            pra_data = {
+                'id': dataObj.junction_id,
+                'stage': dataObj.stage,
+                'cycle_id': dataObj.cycle_id,
+                'index': dataObj.index,
+                'type': dataObj.signal_status,
+                'x': dataObj.x,
+                'y': dataObj.junction_loc,
+                'w': dataObj.w,
+                'h': stage_bar_height,
+                'fill': green_line_color,
+                'cycle': dataObj.cycle,
+                'offset': dataObj.offset,
+                'start': dataObj.green_start
+            }
+            break;
+        case 'drap':
+            pra_data = {
+                'id': dataObj.junction_id,
+                'stage': dataObj.stage,
+                'cycle_id': dataObj.cycle_id,
+                'index': dataObj.index,
+                'type': dataObj.signal_status,
+                'x': dataObj.x,
+                'y': dataObj.junction_loc,
+                'w': 2,
+                'h': stage_bar_height,
+                'fill': yellow_line_color,
+                'cycle': dataObj.cycle,
+                'offset': dataObj.offset,
+                'start': dataObj.green_start
+            }
+            break;
+        default:
+            console.log('error type' + signal_status)
+    }
+    return pra_data
+}
+
+// 4、显示label
+function show_label(data4plot, map_configure){
+    console.log('show_label',data4plot)
+    var junction_list = []   //交叉口集合
+    for (var j = 0; j < map_configure.length; j++) {
+        junction_list.push(map_configure[j].junction_id)
+    }
+    show_info=[]
+    for (var i=0;i<junction_list.length;i++){
+        for (var j=0;j<data4plot.length;j++){
+            if (junction_list[i]==data4plot[j].id){
+                show_info.push({
+                    'id': data4plot[j].id,
+                    'offset': data4plot[j].offset,
+                    'cycle': data4plot[j].cycle,
+                    'type': data4plot[j].type,
+                    'w': data4plot[j].w,
+                    'x_loc': data4plot[j].x,
+                    'y_loc': data4plot[j].y
+                })
+                break
+            }
+        }
+    }
+    return show_info
+}
+
+// 5、根据配时数据生成绿波
+function re_generate_greenwave(data4plot) {
+    // console.log('re_generate_greenwave', data4plot)
+    // 正向
+    stage_0 = []
+    // 反向
+    stage_1 = []
+    final_green_0 = []
+    final_green_1 = []
+    green = []
+    for (var i = 0; i < data4plot.length; i++) {
+        // 正向数据
+        if (data4plot[i].stage == 0) {
+            stage_0.push(data4plot[i])
+        } else {
+            // 反向数据
+            stage_1.push(data4plot[i])
+        }
+    }
+    if (stage_0.length != 0) {
+        final_green_0 = plot_greenwave(stage_0, 0, map_configure)
+    }
+    if (stage_1.length != 0) {
+        final_green_1 = plot_greenwave(stage_1, 1, map_configure)
+    }
+    if (final_green_0.length != 0 & final_green_1.length != 0) {
+        green = final_green_0.concat(final_green_1)
+    }
+    if (final_green_0.length == 0 & final_green_1.length != 0) {
+        green = final_green_1
+    }
+    if (final_green_0.length != 0 & final_green_1.length == 0) {
+        green = final_green_0
+    }
+    return green
+}
+
+// 6、绿波数据
+function plot_greenwave(data4plot, stage, map_configure) {
+    //junction_num = map_configure.length
+    // console.log('plot_greenwave')
+    let cycle_num = 0;
+    // 交叉口集合
+    let junction_list = []
+    for (let j = 0; j < map_configure.length; j++) {
+        junction_list.push(map_configure[j].junction_id)
+    }
+
+    // 单交叉口单stage红绿灯数据
+    junction_data_for_green = []
+    for (let i = 0; i < junction_list.length; i++) {
+        junction_data = []
+        for (let j = 0; j < data4plot.length; j++) {
+            if (data4plot[j].id == junction_list[i]) {
+                junction_data.push(data4plot[j])
+            }
+        }
+        // 路口显示周期数
+        cycle_num = junction_data[junction_data.length-1].cycle_id
+        green_point = junction_data_for_green_wave(junction_data, cycle_num)
+        junction_data_for_green.push({
+            'id': i,
+            'point': green_point
+        })
+    }
+
+    console.log('junction_data_for_green',junction_data_for_green)
+
+    //反向绿波
+    sin_data_for_green = []
+    if (stage == 1) {
+        for (let i = junction_data_for_green.length - 1; i > -1; i--) {
+            sin_data_for_green.push(junction_data_for_green[i])
+        }
+        junction_data_for_green = sin_data_for_green
+    }
+
+    // console.log('sin_data_for_green',sin_data_for_green)
+
+    green_point = []
+    for (let i = 0; i < junction_data_for_green.length; i++) {
+        green_start_end = junction_data_for_green[i].point
+        all_green_point = []
+        for (let j = 0; j < green_start_end.length; j++) {
+            sin_green_start_end = green_start_end[j]
+            console.log('sin_green_start_end',sin_green_start_end)
+            sin_green_point = [sin_green_start_end.start_point[0], sin_green_start_end.end_point[0]]
+            // console.log('this is green_point')
+            // console.log(sin_green_point)
+            all_green_point.push(sin_green_point)
+        }
+        green_point.push({
+          'id': junction_data_for_green[i].id,
+          'point': all_green_point
+        })
+    }
+    // console.log('this is green_point')
+    // console.log(green_point)
+    // console.log('green_point',green_point)
+
+
+    final_green = []
+    // 两个路口绿灯信息
+    for (let i = 0; i < junction_data_for_green.length - 1; i++) {
+        // 正反向斜率
+        if (stage == 0) {
+            k = map_configure[i].free_speed[0] //当前交叉口自由流速度
+        } else {
+            k = -map_configure[i].free_speed[0] //当前交叉口自由流速度
+        }
+
+        //前交叉口
+        first_point = junction_data_for_green[i].point
+        //后交叉口
+        second_point = junction_data_for_green[i + 1].point
+
+        for (let c = 0; c < cycle_num; c++) {
+            //c=4
+            final_start_point = []
+            final_end_point = []
+            junction1_start = first_point[c].start_point
+            junction1_end = first_point[c].end_point
+            junction2_start = second_point[c].start_point
+            junction2_end = second_point[c].end_point
+
+            //基于起始交叉口确定绿波边界
+            b1 = junction1_start[1] - junction1_start[0] * k
+            // console.log('b1',b1)
+            junc2_t1 = (junction2_start[1] - b1) / k
+            // console.log('junc2_t1',junc2_t1)
+            current_cycle_1 = determine_in_green(i, junc2_t1, junction_data_for_green) //确定与下个交叉口的绿灯是否交点
+
+            b2 = junction1_end[1] - junction1_end[0] * k
+            junc2_t2 = (junction2_end[1] - b2) / k
+            current_cycle_2 = determine_in_green(i, junc2_t2, junction_data_for_green) //确定与下个交叉口的绿灯是否交点
+            // console.log('正向current_cycle_1',current_cycle_1)
+            // console.log('反向current_cycle_2',current_cycle_2)
+
+            // 正反向都有交叉
+            if (current_cycle_1.id == 1 && current_cycle_2.id == 1) {
+                console.log('正反向都有交叉')
+                // 两个路口下个周期相等
+                if (current_cycle_1.next_cycle == current_cycle_2.next_cycle) {
+                    junc2_t1 = (junction2_start[1] - b1) / k
+                    final_start_point = [
+                        [junction1_start[0], junction1_start[1]],
+                        [junc2_t1, junction2_start[1]]
+                    ]
+                    junc2_t2 = (junction2_end[1] - b2) / k
+                    junc1_t2 = junction1_end[0]
+                    final_end_point = [
+                        [junc1_t2, junction1_end[1]],
+                        [junc2_t2, junction2_end[1]]
+                    ]
+                } else {
+                    // 两个路口下个周期不相等
+                    junc2_t1 = (junction2_start[1] - b1) / k
+                    final_start_point = [
+                        [junction1_start[0], junction1_start[1]],
+                        [junc2_t1, junction2_start[1]]
+                    ]
+
+                    junction2_start = second_point[current_cycle_1.next_cycle - 1].start_point
+                    junction2_end = second_point[current_cycle_1.next_cycle - 1].end_point
+
+                    b2 = junction2_end[1] - junction2_end[0] * k
+                    junc1_t2 = (junction1_end[1] - b2) / k
+                    final_end_point = [
+                        [junc1_t2, junction1_end[1]],
+                        [junction2_end[0], junction2_end[1]]
+                    ]
+                }
+            }
+
+            // 正向无交叉 反向有交叉
+            if (current_cycle_1.id == 0 && current_cycle_2.id == 1) {
+                console.log('正向无交叉 反向有交叉')
+                junction2_start = second_point[current_cycle_1.next_cycle].start_point
+                junction2_end = second_point[current_cycle_1.next_cycle].end_point
+                b1 = junction2_start[1] - junction2_start[0] * k
+                junc1_t1 = (junction1_start[1] - b1) / k
+                final_start_point = [
+                    [junc1_t1, junction1_start[1]],
+                    [junction2_start[0], junction2_start[1]]
+                ]
+                junc2_t2 = (junction2_end[1] - b2) / k
+                junc1_t2 = junction1_end[0]
+                final_end_point = [
+                    [junc1_t2, junction1_end[1]],
+                    [junc2_t2, junction2_end[1]]
+                ]
+            }
+
+            // 正向有交叉，反向无交叉
+            if (current_cycle_1.id == 1 && current_cycle_2.id == 0) {
+                console.log('正向有交叉，反向无交叉')
+                junc2_t1 = (junction2_start[1] - b1) / k
+                final_start_point = [
+                    [junction1_start[0], junction1_start[1]],
+                    [junc2_t1, junction2_start[1]]
+                ]
+                junction2_start = second_point[current_cycle_2.next_cycle - 1].start_point
+                junction2_end = second_point[current_cycle_2.next_cycle - 1].end_point
+                b2 = junction2_end[1] - junction2_end[0] * k
+                junc1_t2 = (junction1_end[1] - b2) / k
+                final_end_point = [
+                    [junc1_t2, junction1_end[1]],
+                    [junction2_end[0], junction2_end[1]]
+                ]
+            }
+
+            // 正反向均无交叉
+            if (current_cycle_1.id == 0 && current_cycle_2.id == 0) {
+                console.log('正反向均无交叉')
+                if (current_cycle_1.next_cycle != current_cycle_2.next_cycle) {
+                    junction2_start = second_point[current_cycle_1.next_cycle].start_point
+                    junction2_end = second_point[current_cycle_1.next_cycle].end_point
+                    b1 = junction2_start[1] - junction2_start[0] * k
+                    junc1_t1 = (junction1_start[1] - b1) / k
+                    final_start_point = [
+                        [junc1_t1, junction1_start[1]],
+                        [junction2_start[0], junction2_start[1]]
+                    ]
+                    b2 = junction2_end[1] - junction2_end[0] * k
+                    junc1_t2 = (junction1_end[1] - b2) / k
+                    final_end_point = [
+                        [junc1_t2, junction1_end[1]],
+                        [junction2_end[0], junction2_end[1]]
+                    ]
+                }
+            }
+
+            console.log('final_start_point',final_start_point)
+            console.log('final_end_point',final_end_point)
+            if (final_start_point.length > 1 && final_end_point.length > 1) {
+                // 正向
+                if (stage == 0) {
+                    final_green.push({
+                        'stage': stage,
+                        'str_x': final_start_point[0][0],
+                        'str_y': final_start_point[0][1],
+                        'end_x': final_start_point[1][0],
+                        'end_y': final_start_point[1][1],
+                        "stroke": green_line_color,
+                        "width": green_line_width
+                    })
+                    final_green.push({
+                        'stage': stage,
+                        'str_x': final_end_point[0][0],
+                        'str_y': final_end_point[0][1],
+                        'end_x': final_end_point[1][0],
+                        'end_y': final_end_point[1][1],
+                        "stroke": green_line_color,
+                        "width": green_line_width
+                    })
+                } else {
+                    // 反向
+                    final_green.push({
+                        'stage': stage,
+                        'str_x': final_start_point[0][0],
+                        'str_y': final_start_point[0][1],
+                        'end_x': final_start_point[1][0],
+                        'end_y': final_start_point[1][1],
+                        "stroke": green_line_color,
+                        "width": green_line_width
+                    })
+                    final_green.push({
+                        'stage': stage,
+                        'str_x': final_end_point[0][0],
+                        'str_y': final_end_point[0][1],
+                        'end_x': final_end_point[1][0],
+                        'end_y': final_end_point[1][1],
+                        "stroke": green_line_color,
+                        "width": green_line_width
+                    })
+                }
+            }
+        }
+        // console.log('this is final_start_point')
+        // console.log(final_start_point)
+        // console.log('this is final_end_point')
+        // console.log(final_end_point)
+    }
+    console.log('final_green',final_green)
+    return final_green
+}
+
+// 7、路口绿波数据
+function junction_data_for_green_wave(junction_data, cycle_num) {
+    console.log('junction_data_for_green_wave cycle_num', cycle_num)
+    console.log('junction_data_for_green_wave junction_data', junction_data)
+    var green_point = []
+    for (var c = 1; c < cycle_num + 1; c++) {
+        var cycle_data = []
+        cycle_data['cycle_id'] = c
+        var point = {}
+        for (var i = 0; i < junction_data.length; i++) {
+          // 绿波长度
+          if (junction_data[i].cycle_id == c && junction_data[i].type == 'green') {
+              // console.log(junction_data[i].x)
+              point['begin'] = [junction_data[i].x, junction_data[i].y]
+          }
+          // 红波
+          if (junction_data[i].cycle_id == c && junction_data[i].type == 'red') {
+              // console.log(junction_data[i].x)
+              point['last'] = [junction_data[i].x, junction_data[i].y]
+          }
+        }
+        green_point.push({
+            'cycle_id': c,
+            'start_point': point.begin,
+            'end_point': point.last
+        })
+    }
+    return green_point
+}
+
+// 8、判断与下个交叉路口是否相交
+function determine_in_green(i, junc2_t1, junction_data_for_green) {
+    console.log('determine_in_green junction_data_for_green', junction_data_for_green)
+    console.log('determine_in_green i', i)
+    // 下个路口数据
+    next_junction_data = junction_data_for_green[i + 1]
+    for (let j = 0; j < next_junction_data.point.length; j++) {
+        next_point = next_junction_data.point[j]
+        id = 0
+        // 路口2的数据在起止点之间，有交叉
+        if (junc2_t1 > next_point.start_point[0] && junc2_t1 < next_point.end_point[0]) {
+            id = 1
+            next_cycle = j + 1
+            break;
+        }
+    }
+    for (let j = 0; j < next_junction_data.point.length; j++) {
+        next_point = next_junction_data.point[j]
+        // 两路口路灯无交叉
+        if (junc2_t1 < next_point.start_point[0]) {
+            next_cycle = j
+            next_point = next_junction_data.point[j + 1]
+            break;
+        }
+    }
+    return {
+        'id': id,
+        'next_cycle': next_cycle,
+        'cycle': next_point
+    }
+}
+
+// 9、画图
+function load_bar(data4plot, final_green, show_info) {
+    console.log('load_bar final_green',final_green)
+    // 画出路口信息
+    for (let i=0; i < map_configure.length; i++){
+        var paddingTop = show_info[i].y_loc
+        if(i>0){
+            paddingTop = show_info[i].y_loc - show_info[i-1].y_loc - stage_info[i].dis
+        }
+        d3.select("#d3_bottom_left")
+        .append('div')
+        .style("padding-top",paddingTop)
+        .append('text')
+        .style("text-anchor", "start")
+        .style("font-size", "14px")
+        .style("fill", "black")
+        .text(map_configure[i].junction_name)
+    }
+    // 画出路口周期等
+    for (let i=0;i<show_info.length;i++){
+        var paddingTop = show_info[i].y_loc
+        if(i>0){
+            paddingTop = show_info[i].y_loc - show_info[i-1].y_loc - stage_info[i].dis
+        }
+        d3.select("#d3_bottom_right_tip")
+        .append('p').classed("offsetDiv",true)
+        .style("padding-top",paddingTop)
+        .append('text')
+        .style("text-anchor", "start")
+        .style("font-size", "14px")
+        .style("fill","black")
+        .text('相位差: '+show_info[i].offset)
+        .append('div')
+        .style("text-anchor", "start")
+        .style("font-size", "14px")
+        .style("fill","black")
+        .text('周期: '+show_info[i].cycle)
+        .append('div')
+        .append('text')
+        .style("text-anchor", "start")
+        .style("font-size", "14px")
+        .style("fill","black")
+        .text('绿灯持续时间: '+show_info[i].w)
+    }
+
+    // 红绿灯相位
+    svg.selectAll('rect')
+        .data(data4plot)
+        .enter()
+        .append('rect')
+        .attr('x', function (d) {
+            return xScale(d.x);
+        })
+        .attr('y', function (d) {
+            return yScale(d.y);
+        })
+        .attr('width', function (d) {
+            return xScale(d.w);
+        })
+        .attr('height', function (d) {
+            return d.h;
+        })
+        .attr('fill', function (d) {
+            return d.fill;
+        })
+        .attr('id', function (d) {
+            return d.id;
+        })
+        .call(dragging)
+
+    // 绿波线
+    for (let i = 0; i < final_green.length; i++) {
+        // 绿波线
+        svg.append('line')
+            .attr('x1', xScale(final_green[i].str_x))
+            .attr('y1', yScale(final_green[i].str_y))
+            .attr('x2', xScale(final_green[i].end_x))
+            .attr('y2', yScale(final_green[i].end_y))
+            .attr("stroke", final_green[i].stroke)
+            .attr("stroke-width", final_green[i].width)
+            .call(dragging)
+
+            // 绿波区域
+            if(i%2 == 1){
+                var  arrayOfPolygons = {
+                    "points":[
+                        [xScale(final_green[i-1].str_x), yScale(final_green[i-1].str_y)],
+                        [xScale(final_green[i-1].end_x), yScale(final_green[i-1].end_y)],
+                        [xScale(final_green[i].end_x), yScale(final_green[i].end_y)],
+                        [xScale(final_green[i].str_x), yScale(final_green[i].str_y)]
+                    ]
+                }
+                svg.append('polygon')
+                    .attr("points",arrayOfPolygons.points)
+                    .attr("fill",'green')
+                    .style("opacity",0.2)
+            }
+    }
+}
+
+
+// 1、拖拽更新数据
+function re_generate_data4plot(data4plot, drag_index, type) {
+    console.log('re_generate_data4plot',drag_index)
+    console.log('re_generate_data4plot data4plot',data4plot)
+    junction_id = data4plot[drag_index].id
+    console.log('junction_id', junction_id)
+    // if (type == 'drap') {
+    //     drag_x = data4plot[drag_index].x
+    //     data4plot[drag_index - 1].w = drag_x
+    //     data4plot[drag_index + 1].w = data4plot[drag_index + 1].w - (drag_x - data4plot[drag_index + 1].x)
+    //     data4plot[drag_index + 1].x = drag_x
+    // }
+    let newData4plot = []
+    if (type == 'green' || type == 'red') {
+        //计算改变量
+        drag_x = data4plot[drag_index].x
+        drag_w = data4plot[drag_index].w
+        before_drag_x = data4plot[drag_index + 1].x
+        origin_x = before_drag_x - drag_w
+        change_x = drag_x - origin_x
+
+        console.log('this is origin_x', origin_x)
+        console.log('this is change_x', change_x)
+        console.log('this is drag_index', drag_index)
+        console.log('data4plot', data4plot)
+
+        // 只有有拖动距离的时候才操作
+        if(change_x != 0){
+          let newState0Obj = {}
+          let newState1Obj = {}
+          for (var i = 0; i < data4plot.length; i++) {
+            // 当前拖拽路口绿灯的相位差
+            if (data4plot[i].type == "green" && data4plot[i].cycle_id == 1 && junction_id == data4plot[i].id){
+              offset = data4plot[i].x - data4plot[i].cycle*(data4plot[i].cycle_id - 1) - data4plot[i].start
+              console.log('当前拖拽路口绿灯的相位差',offset)
+            }
+
+            // 当前拖拽路口的坐标偏移量
+            if (i != drag_index && junction_id == data4plot[i].id) {
+              data4plot[i].x = data4plot[i].x + change_x
+              data4plot[i].offset = offset
+              console.log('当前路口的数据索引',i)
+              // 往右拖拽，拖拽距离属于红灯
+              if(change_x>0 && change_x<data4plot[i].cycle - data4plot[i].offset - data4plot[i].start - data4plot[i].w){
+                // console.log('往右拖拽，拖拽距离属于红灯',i)
+                // 找到第一条数据
+                if(data4plot[i].type == "green" && data4plot[i].cycle_id == 1){
+                  console.log('找到第一个路口绿灯数据',i)
+                  if(offset>0 && data4plot[i].stage == 0){
+                    console.log('正向 找到第一条绿灯数据',i)
+                    newState0Obj = Object.assign({},data4plot[i],{
+                      cycle_id: data4plot[i].cycle_id - 1,
+                      fill: data4plot[i+1].fill,
+                      type: data4plot[i+1].type,
+                      offset: 0,
+                      start: 0,
+                      w: change_x,
+                      x: 0,
+                      index: 0
+                    })
+                    console.log('newState0Obj',newState0Obj)
+                    if(data4plot.length>50){
+
+                    }else{
+                      // data4plot.splice(i,0,newState0Obj)
+                    }
+
+                  }
+                  if(offset>0 && data4plot[i].stage == 1){
+                    console.log('反向 找到第一条绿灯数据',i)
+                    newState1Obj = Object.assign({},data4plot[i],{
+                      cycle_id: data4plot[i].cycle_id - 1,
+                      fill: data4plot[i+1].fill,
+                      type: data4plot[i+1].type,
+                      offset: 0,
+                      start: 0,
+                      w: change_x,
+                      x: 0,
+                      index: data4plot[i].index
+                    })
+                    console.log('newState1Obj',newState1Obj)
+                    // data4plot.splice(i,0,newState1Obj)
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+    console.log('new data4plot', data4plot)
+    return data4plot
+}
+
+// 更新d3
+function update_d3(data4plot, final_green) {
+    console.log('update_d3')
+    // var update_text=svg.selectAll('text').data(data4plot)
+    // update_text.append('g.text')
+    //     .text('offset: '+data4plot[0].offset)
+    //     .attr("x", xScale(data4plot[0].x))
+    //     .attr("y",yScale(data4plot[0].y+60))
+    //     .style("text-anchor", "start")
+    //     .style("font-size", "15px")
+    //     .style("fill","black");
+    d3.select("#d3_bottom_right_tip").select('.offsetDiv').select('text').text('相位差: '+data4plot[0].offset)
+    // 更新红绿灯相位差
+    svg.selectAll('rect')
+        .data(data4plot)
+        .attr('x', function (d) {
+            return xScale(d.x);
+        })
+        .attr('y', function (d) {
+            return yScale(d.y);
+        })
+        .attr('width', function (d) {
+            return xScale(d.w);
+        })
+        .attr('height', function (d) {
+            return d.h;
+        })
+        .attr('fill', function (d) {
+            return d.fill;
+        })
+        .attr('id', function (d) {
+            return d.id;
+        })
+console.info('更新绿波线 final_green', final_green)
+
+    // 更新绿波线
+    svg.selectAll('line').remove()
+    svg.selectAll('polygon').remove()
+    // 绿波线
+    for (let i = 0; i < final_green.length; i++) {
+        // 绿波线
+        svg.append('line')
+            .attr('x1', xScale(final_green[i].str_x))
+            .attr('y1', yScale(final_green[i].str_y))
+            .attr('x2', xScale(final_green[i].end_x))
+            .attr('y2', yScale(final_green[i].end_y))
+            .attr("stroke", final_green[i].stroke)
+            .attr("stroke-width", final_green[i].width)
+            .call(dragging)
+
+            // 绿波区域
+            if(i%2 == 1){
+                var  arrayOfPolygons = {
+                    "points":[
+                        [xScale(final_green[i-1].str_x), yScale(final_green[i-1].str_y)],
+                        [xScale(final_green[i-1].end_x), yScale(final_green[i-1].end_y)],
+                        [xScale(final_green[i].end_x), yScale(final_green[i].end_y)],
+                        [xScale(final_green[i].str_x), yScale(final_green[i].str_y)]
+                    ]
+                }
+                svg.append('polygon')
+                    .attr("points",arrayOfPolygons.points)
+                    .attr("fill",'green')
+                    .style("opacity",0.2)
+            }
+    }
+}
+
+// function generate_green_red_point(signal_configure,show_time){
+//     console.log('generate_green_red_point')
+//     for (var i=0; i<signal_configure.length;i++){
+//         junction_id=signal_configure[i].junction_id
+//         cycle=signal_configure[i].cycle
+//         offset=signal_configure[i].offset
+//         signal_phase=signal_configure[i].signal_phase
+//         for (var j=0;j<signal_phase.length;j++){
+//             phase_id=signal_phase[j].phase_id
+//             green_start=signal_phase[j].green_start
+//             green_length=signal_phase[j].green_duration
+//         }
+//     }
+// }
+
+
+// function load_greenwave(final_green) {
+//     console.log('load_greenwave')
+//     for (var i = 0; i < final_green.length; i++) {
+//         // console.log(final_green[i])
+//         var line = svg.append('line')
+//             .attr('x1', xScale(final_green[i].str_x))
+//             .attr('y1', yScale(final_green[i].str_y))
+//             .attr('x2', xScale(final_green[i].end_x))
+//             .attr('y2', yScale(final_green[i].end_y))
+//             .attr("stroke", "black")
+//             .attr("stroke-width", 2)
+//             .call(dragging)
+//     }
+// }
+
+</script>
+</body>
+</html>
